@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+.mysql/
+private/
+*.log
+test-output/

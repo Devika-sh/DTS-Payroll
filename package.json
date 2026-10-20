@@ -1,0 +1,37 @@
+{
+  "name": "dev-technical-payroll",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"node --watch server/index.js\" \"vite --host 127.0.0.1\"",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "db:migrate": "node server/migrate.js",
+    "import": "node server/import-cli.js",
+    "backup": "node scripts/backup.js",
+    "test": "node --test tests/*.test.js",
+    "test:integration": "node --test tests/integration.js"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "decimal.js": "^10.5.0",
+    "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "lucide-react": "^0.468.0",
+    "multer": "^2.0.2",
+    "mysql2": "^3.14.0",
+    "pdfkit": "^0.17.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.1.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "vite": "^6.1.0"
+  }
+}
