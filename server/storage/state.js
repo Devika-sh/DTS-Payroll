@@ -5,7 +5,7 @@ export const emptyState = () => ({ schema: 1, workers: [], entries: [], imports:
 export const storageError = (message, status = 503) => Object.assign(new Error(message), { status });
 export function validateState(state) {
   if (state?.schema !== 1 || !['workers','entries','imports','audit'].every(k => Array.isArray(state[k]))) {
-    throw storageError('The payroll spreadsheet has an unsupported or damaged storage format. Restore a backup.');
+    throw storageError('The payroll store has an unsupported or damaged storage format. Restore a backup.');
   }
   for (const key of ['workers','entries','imports','audit']) {
     const ids = state[key].map(row => row.id);

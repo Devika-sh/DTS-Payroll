@@ -5,16 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import ExcelJS from 'exceljs';
 
-test('Spreadsheet-backed HTTP payroll, transactional imports, audit history, backup, PDFs and Excel',async()=>{
+test('Storage-backed HTTP payroll, transactional imports, audit history, backup, PDFs and Excel',async()=>{
   const dir=await fs.mkdtemp(path.join(os.tmpdir(),'payroll-api-'));
-  process.env.STORAGE_MODE='excel';process.env.PAYROLL_FILE=path.join(dir,'payroll.xlsx');delete process.env.VERCEL;
+  process.env.STORAGE_MODE=process.env.TEST_MONGODB_URI?'mongodb':'excel';
+  if(process.env.TEST_MONGODB_URI){process.env.MONGODB_URI=process.env.TEST_MONGODB_URI;process.env.MONGODB_DB='payroll_http_test';}
+  process.env.PAYROLL_FILE=path.join(dir,'payroll.xlsx');delete process.env.VERCEL;
   const {app}=await import('../server/app.js');
   let server;
   try{
     server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
     const base=`http://127.0.0.1:${server.address().port}`;
     const call=async(url,body,method='POST')=>{const response=await fetch(base+'/api'+url,{method,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});return {status:response.status,data:await response.json()};};
-    assert.equal((await call('/health',null,'GET')).data.storage,'excel');
+    assert.equal((await call('/health',null,'GET')).data.storage,process.env.STORAGE_MODE);
     const w=(await call('/workers',{name:'Test worker',dailyRate:1300})).data.id;
     const input={workerId:w,date:'2026-10-20',site:'SBLA',salary:1300,otHours:2,advance:500};
     const created=await call('/entries',input);assert.equal(created.status,201);
@@ -54,5 +56,5 @@ test('Spreadsheet-backed HTTP payroll, transactional imports, audit history, bac
     assert.equal(all.entries.filter(e=>e.total_cents==null).length,1);
     const original=await fetch(base+`/api/imports/${imported.data.id}/original`);assert.deepEqual(Buffer.from(await original.arrayBuffer()),buffer);
     const originResponse=await fetch(base+'/api/workers',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://untrusted.example'},body:JSON.stringify({name:'Bad origin'})});assert.equal(originResponse.status,403);
-  }finally{if(server)await new Promise(resolve=>server.close(resolve));await fs.rm(dir,{recursive:true,force:true});}
+  }finally{await (await import('../server/storage/index.js')).closeStore();if(server)await new Promise(resolve=>server.close(resolve));await fs.rm(dir,{recursive:true,force:true});}
 });

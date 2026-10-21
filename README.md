@@ -1,124 +1,96 @@
 # Dev Technical Services — Payroll
 
-React, Tailwind CSS and Express payroll SPA with **spreadsheet storage**. MySQL is no longer required.
+React, Tailwind CSS and Express payroll app using **MongoDB by default**, both locally and on Vercel. Excel imports, exports, original downloads, PDF payslips, audit history and JSON backups remain available.
 
-- **Local:** an Excel workbook at `private/payroll.xlsx` stores workers, ledger entries, originals and audit history.
-- **Vercel:** a private Google spreadsheet stores the same records through an authenticated Apps Script gateway. No database server or Google service-account key is needed.
+## Connect MongoDB Atlas
 
-## Run locally
+1. Create a project and cluster in [MongoDB Atlas](https://www.mongodb.com/cloud/atlas).
+2. Under **Database & Network Access**, create a **database user** with `readWrite` access to the `dts_payroll` database. This is separate from your Atlas sign-in account.
+3. Add your computer's public IP to the project's IP access list. For deployment, also allow your server's outbound IP addresses. Vercel needs a network configuration whose outbound addresses Atlas permits; allowing only your laptop IP will not allow Vercel to connect. Prefer fixed outbound addresses and a restricted access list. An allow-all entry (`0.0.0.0/0`) exposes the database endpoint to the internet and should not be the default for payroll data.
+4. In the cluster, select **Connect → Drivers → Node.js** and copy the connection string. Replace the username/password placeholders; URL-encode special characters in either value. Keep the URI private.
+5. Install Node.js 22 or newer and run `npm ci` in this repository. On a new installation, copy `.env.example` to `.env`. If `.env` already exists, edit it without overwriting other settings:
 
-Requires Node.js 22 or newer.
+   ```dotenv
+   STORAGE_MODE=mongodb
+   MONGODB_URI=mongodb+srv://USERNAME:ENCODED_PASSWORD@YOUR_CLUSTER.mongodb.net/?retryWrites=true&w=majority
+   MONGODB_DB=dts_payroll
+   APP_ORIGINS=http://127.0.0.1:3001,http://localhost:5173
+   PORT=3001
+   HOST=127.0.0.1
+   ```
+
+6. Run `npm run build`, then `npm start`. Open http://127.0.0.1:3001. For development use `npm run dev` and the Vite URL printed in the terminal.
+7. Visit http://127.0.0.1:3001/api/health. Expected result: `{"storage":"mongodb","status":"connected"}`. Create a worker, refresh, and verify it remains saved. The database and `payroll_state` collection are created on the first write.
+
+For a locally installed MongoDB server, use `MONGODB_URI=mongodb://127.0.0.1:27017` instead. MongoDB must be running; installing npm dependencies does not install a production database server.
+
+Official references: [Atlas connection setup](https://www.mongodb.com/docs/atlas/connect-to-database-deployment/), [IP access lists](https://www.mongodb.com/docs/atlas/security/ip-access-list/), and [Node.js connection pools](https://www.mongodb.com/docs/drivers/node/current/connect/connection-options/connection-pools/).
+
+## Copy existing payroll records
+
+Changing configuration does not automatically copy data. MongoDB starts empty. Stop payroll edits during transfer and keep a protected backup of the existing source.
+
+With the destination MongoDB variables configured in `.env`, copy the existing local workbook:
 
 ```powershell
-npm ci
-Copy-Item .env.example .env
-npm run build
-npm start
+npm run mongodb:upload -- excel
 ```
 
-Open http://127.0.0.1:3001. On the existing workstation, keep the supplied `.env` and private workbook instead of copying over them. New installations begin empty. Use `npm run dev` for the React development server on port 5173.
+The source defaults to `private/payroll.xlsx`; set `PAYROLL_FILE` if needed. To copy Google Sheets instead, retain `SHEETS_WEB_APP_URL` and `SHEETS_SECRET` in `.env`, then run:
 
-## Spreadsheet storage
+```powershell
+npm run mongodb:upload -- google-sheets
+```
 
-The local workbook has readable **Workers**, **Ledger**, **Audit**, and **Imports** tabs. These are review views; enter and correct records through the app. A hidden, checksummed state sheet retains complete audit snapshots, null earnings, source formulas, and imported workbook bytes, split into chunks to avoid Excel cell-size limits. Do not delete or edit technical sheets. Editing a review cell does not change the app's payroll data.
+The command refuses a nonempty destination and copies workers, entries (including voided entries), originals, audits and migration markers. It reads the source without running the old entry-reset migration and leaves the source unchanged. MongoDB never runs that historical destructive reset. Verify counts and reports after transfer, then use MongoDB as the authoritative store; stores do not synchronize.
 
-Writes use a cross-process lock, a temporary file and atomic replacement. The preceding version is retained as `payroll.xlsx.previous.xlsx`. Keep the storage workbook closed in Excel while the app is saving. After a process crash, if a stale `.lock` file prevents writes, stop **all** payroll server processes first, then remove only `private/payroll.xlsx.lock` and restart. Never remove an active lock.
-
-The requested reset is now tracked in Git as migration `2026-10-21-clear-all-payroll-entries`. The first storage access after updating to this version clears **all existing entries**, including archived entries, plus their import records and entry-specific audit history. Workers remain. This runs for both local Excel storage and the configured Google spreadsheet. A persisted migration marker ensures later restarts, redeployments and Vercel instances preserve entries added after the reset. Back up an existing store before upgrading this version.
-
-The current workstation has **eight workers and zero total entries**, including zero archived entries. Private recovery backups are excluded from GitHub. The prior MySQL data directory is retained separately as a recovery copy and is not used by the application. You can apply/check pending storage migrations explicitly with `npm run storage:migrate`. This command is idempotent; it does not repeat an already-applied reset.
-
-## Connect Google Sheets for Vercel
-
-This is a one-time manual setup in your Google account. No live Google spreadsheet has been connected or populated by this commit.
-
-1. Create a new private Google spreadsheet for payroll. Copy its spreadsheet ID from the URL between `/d/` and `/edit`.
-2. In that spreadsheet, open **Extensions → Apps Script**.
-3. Replace the editor contents with `google-apps-script/Code.gs` from this repository and save it.
-4. Open **Project Settings → Script properties** and add:
-
-   | Property | Value |
-   | --- | --- |
-   | `PAYROLL_SPREADSHEET_ID` | The spreadsheet ID |
-   | `PAYROLL_SECRET` | A random secret of at least 32 characters |
-
-   Generate a secret locally with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Keep it private; use the same value for the server's `SHEETS_SECRET`.
-5. Select **Deploy → New deployment → Web app**. Set **Execute as: Me** and **Who has access: Anyone**. Authorize the script and copy its URL ending in `/exec`. The gateway rejects requests without your secret; the spreadsheet itself stays private. If your Workspace administrator disallows this deployment type, use a permitted Google account or a different storage host.
-6. Deploy only **one gateway script project per spreadsheet**. Its script lock and revision checks serialize saves, and transaction IDs avoid duplicating a save after a lost response. An inactive snapshot is verified before its manifest is switched, preserving the previous complete version.
-7. Visible Google tabs are read-only review views updated after saves. All app reads use the committed snapshot. If projection refresh fails, the app data remains committed; use the app's current ledger and make another save after resolving Sheets quotas/access issues. Avoid manual changes to the hidden `_DTS_*` sheets.
-
-Google Apps Script setup references: [web apps](https://developers.google.com/apps-script/guides/web), [script properties](https://developers.google.com/apps-script/guides/properties), and [locks](https://developers.google.com/apps-script/reference/lock/lock-service).
+Legacy `STORAGE_MODE=excel` and `STORAGE_MODE=google-sheets` remain available for recovery/transition. Those legacy modes still run their existing versioned reset migration if its marker is missing. Use the transfer command above to preserve a source without applying that reset. Excel storage is rejected on Vercel.
 
 ## Deploy from GitHub to Vercel
 
-The repository includes the full frontend/server source, `api/index.js`, and `vercel.json`.
-
-1. Push this commit to GitHub.
-2. In Vercel choose **Add New → Project** and import `Devika-sh/DTS-Payroll`.
-3. Use the repository root, framework **Vite**, install command `npm ci`, build command `npm run build`, and output directory `dist`. Vercel runs the Express API through the API entry point; it does not run `npm start`.
-4. Add these server environment variables for **Production**:
+1. Import `Devika-sh/DTS-Payroll` into Vercel. Use framework **Vite**, repository root, install command `npm ci`, build command `npm run build`, and output directory `dist`. The included `api/index.js` and `vercel.json` route API requests to Express.
+2. Set these server environment variables in Vercel:
 
    ```dotenv
-   STORAGE_MODE=google-sheets
-   SHEETS_WEB_APP_URL=https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec
-   SHEETS_SECRET=the-same-secret-as-PAYROLL_SECRET
+   STORAGE_MODE=mongodb
+   MONGODB_URI=your-private-Atlas-connection-string
+   MONGODB_DB=dts_payroll
    APP_ORIGINS=https://your-project.vercel.app
    ```
 
-   Use the exact origin, without a trailing slash. Multiple trusted domains can be comma-separated. Configure a separate spreadsheet and variables for previews so test deployments cannot change production payroll. Never prefix secrets with `VITE_`.
-5. Enable **Settings → Deployment Protection → All Deployments → Vercel Authentication** before adding payroll data. The app has no built-in user login. Standard Protection can leave production domains publicly accessible; verify in a signed-out browser. For independent staff access, implement application authentication and permissions.
-6. Click **Deploy**. If necessary, correct `APP_ORIGINS` to match the assigned URL, then redeploy.
-7. Open `/api/health`; expect `{"storage":"google-sheets","status":"connected"}`. Create a worker, save an entry, refresh, and verify its ledger, PDF and Excel export.
+   Replace or remove the previous `STORAGE_MODE=google-sheets` setting. Use the exact app origin without a trailing slash; multiple trusted origins can be comma-separated. Never prefix database secrets with `VITE_`. Configure separate databases and database users for previews.
+3. Permit the deployment's outbound network addresses in Atlas. Enable deployment access protection before entering payroll: this app does not implement user login. Verify the production URL is protected in a signed-out browser.
+4. Deploy or redeploy after changing environment variables. Check `/api/health` for `mongodb` and `connected`, then verify a save, refresh, PDF and Excel export.
 
-There are **no DB_* variables, schema migrations, or MySQL setup steps**. Vercel deployments explicitly refuse local Excel storage because deployment-local writes cannot be relied on for durable records.
+If connection fails, check database user credentials, percent-encoding, the cluster hostname, network access and environment variable scope. An empty app usually means a different `MONGODB_DB` was selected or the old records have not been transferred. Do not share `.env` or your connection string in screenshots or GitHub.
 
-### Copy your existing local records to Google Sheets
+## Storage behavior and limits
 
-The new cloud spreadsheet starts empty. To copy the current workstation's workers and preserved history, create an ignored `.env.sheets.local` with `SHEETS_WEB_APP_URL`, `SHEETS_SECRET` and `PAYROLL_FILE=private/payroll.xlsx`, then run:
+A pooled MongoDB client is reused per server instance. The `payroll_state` collection holds one document containing workers, ledger entries, imports and audits. Each mutation atomically replaces the document only if its revision still matches, preventing lost updates across processes. Conflicts retry against the latest state; failed operations leave the prior data intact. Transaction identifiers let the app recognize a successful save if its response is lost.
 
-```powershell
-node --env-file=.env.sheets.local scripts/sheets-upload.js
-```
+This preserves the existing small-workspace repository semantics without requiring multi-document transactions or a replica set for local development. It is not a normalized collection-per-entity design. A 15 MiB document safety limit rejects growth before MongoDB's 16 MiB document limit, including embedded original workbooks and audit history. For larger datasets, move originals to object storage and split records into collections with transactional writes. Keep external backups; do not edit the storage document manually.
 
-The upload refuses any nonempty destination. It preserves the reset state and archived history. It does not re-import the original workbook as active payroll. After the transfer, use one authoritative store: the deployed app with Google Sheets. Local Excel and Google Sheets do not automatically synchronize.
+## Payroll and recovery
 
-## Payroll rules and features
+Workers have individual daily wages, defaulting to INR 1,300 for eight hours. Default OT is daily wage divided by eight. Decimal arithmetic, paise rounding, weekly carry-forward balances, reason-required corrections, stale-version rejection, voids, source amounts and missing salary handling are unchanged.
 
-- Workers have individual base wages; new workers default to INR 1,300 per eight-hour day.
-- New OT defaults to the full daily rate divided by eight: INR 162.50/hour for INR 1,300/day. A half-day salary can be entered without reducing the base OT rate. Explicit recorded OT rates are retained.
-- Money uses decimal arithmetic, rounded to paise per entry. Balances equal earnings minus payments; negative balances represent advances to recover.
-- Monday–Sunday payroll includes opening balance, regular wages, OT, period payments, closing balance and payable. Payable is `max(0, closing)` per worker. Working days count distinct dates with positive salary.
-- Corrections and voids require a reason and retain before/after records. Stale corrections are rejected.
-- Historical source amounts are preserved and flagged rather than silently recalculated. Missing salaries remain null and excluded from earnings until corrected.
-- Worker ledgers, original-workbook downloads, Excel import preview/export, individual PDF payslips and combined weekly PDFs remain available.
-
-## Import, export, backup and restore
-
-Use **Reports & data** to import an `.xlsx` file, preview exceptions, export ledgers, or download a full backup. Imports expect one worker per sheet with `DATE`, `SITE`, `SAL`, `OT.HRS`, `OT. RATE`, `OT AMT`, `TOTAL`, `ADV/STMT` and optional `TYPE`, `Balance`, notes. Blank future dates are skipped. Opening advances use `Opening advance on dd.mm.yy`. All-or-nothing imports reject exact-file duplicates and overlapping daily records.
-
-The upload limit is **4 MB** because Vercel Functions limit request payload size. Larger imports need a separate file-upload flow. Large backup/original downloads can also encounter hosting response limits. This spreadsheet design targets a small payroll workspace, not unlimited data or high write volume; Sheets/Apps Script quotas and workbook rewrite time apply.
+Import `.xlsx` workbooks through **Reports & data**. Imports expect one worker per sheet with `DATE`, `SITE`, `SAL`, `OT.HRS`, `OT. RATE`, `OT AMT`, `TOTAL`, `ADV/STMT` and optional `TYPE`, `Balance`, notes. Uploads are limited to 4 MB. Hosting response limits can also affect large backups or downloads.
 
 ```powershell
 npm run import -- "C:\path\to\workbook.xlsx"
 npm run backup
-```
-
-The CLI reads the configured storage mode. Full backups are JSON files under ignored `private/backups`, including originals, voided records and audit history. Excel ledger export is a report, not a full recovery backup.
-
-To restore into a **new empty destination**, configure `PAYROLL_FILE` to a new workbook path or connect an empty Google spreadsheet, then run:
-
-```powershell
 npm run restore -- "C:\path\to\payroll-backup.json"
 ```
 
-The restore refuses nonempty destinations. Retain protected external backups and test recovery. Never commit `.env`, `.env.*` (except `.env.example`), `private`, backups or payroll workbooks. Any credentials previously committed to GitHub should be rotated; removing a file from the latest commit does not remove historical versions.
+Backups are JSON files under ignored `private/backups`, including originals and audit history. Restore requires an empty destination; select a new `MONGODB_DB` first. Excel export is a report, not a full recovery backup. Never commit `.env`, private workbooks or backups.
 
 ## Verification
 
 ```powershell
 npm test
 npm run test:integration
+npm run test:mongodb
 npm run build
 ```
 
-Tests cover wage calculations, half-days, missing earnings, carry-forwards, local concurrent writers, rollback on failure, reopen persistence, corruption detection, stale revisions, duplicate transaction recovery, formula-safe Google review cells, HTTP operations, imports, audits, backups, PDFs and Excel export. Google gateway tests use the actual Apps Script source with a mocked Google runtime; live Google authorization/deployment requires the account setup above and is not claimed as verified.
+`test:mongodb` starts a temporary real MongoDB server and checks concurrent writes, rollback, uncertain-write recovery, size rejection, preserved records and the complete HTTP payroll flow. Its first run downloads a MongoDB test binary and requires network access. The ordinary integration suite uses an isolated temporary Excel file. No production database is used by these tests. Atlas credentials and deployment network access must still be configured and checked by the account owner.

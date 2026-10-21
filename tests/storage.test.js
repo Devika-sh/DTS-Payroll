@@ -27,9 +27,9 @@ test('Excel storage survives reopen, serializes writers, and rolls back failed m
     await fs.writeFile(filename,'corrupt');await assert.rejects(reopened.read(),/Cannot read/);
   }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
-test('Vercel refuses ephemeral Excel storage and requires configured Sheets',()=>{
+test('Vercel refuses ephemeral Excel storage and requires configured MongoDB',()=>{
   assert.throws(()=>createStore({VERCEL:'1',STORAGE_MODE:'excel'}),/not durable/);
-  assert.throws(()=>createStore({VERCEL:'1'}),/Configure SHEETS/);
+  assert.throws(()=>createStore({VERCEL:'1'}),/Configure MONGODB_URI/);
 });
 
 async function gateway(){
