@@ -24,7 +24,9 @@ The local workbook has readable **Workers**, **Ledger**, **Audit**, and **Import
 
 Writes use a cross-process lock, a temporary file and atomic replacement. The preceding version is retained as `payroll.xlsx.previous.xlsx`. Keep the storage workbook closed in Excel while the app is saving. After a process crash, if a stale `.lock` file prevents writes, stop **all** payroll server processes first, then remove only `private/payroll.xlsx.lock` and restart. Never remove an active lock.
 
-On this workstation, the prior MySQL records were migrated privately with eight workers, 246 archived entries and 247 audit records. The requested reset remains in effect: **zero active entries**. These personal records are excluded from GitHub. The old MySQL data directory is retained as a recovery copy and is not used by the application.
+The requested reset is now tracked in Git as migration `2026-10-21-clear-all-payroll-entries`. The first storage access after updating to this version clears **all existing entries**, including archived entries, plus their import records and entry-specific audit history. Workers remain. This runs for both local Excel storage and the configured Google spreadsheet. A persisted migration marker ensures later restarts, redeployments and Vercel instances preserve entries added after the reset. Back up an existing store before upgrading this version.
+
+The current workstation has **eight workers and zero total entries**, including zero archived entries. Private recovery backups are excluded from GitHub. The prior MySQL data directory is retained separately as a recovery copy and is not used by the application. You can apply/check pending storage migrations explicitly with `npm run storage:migrate`. This command is idempotent; it does not repeat an already-applied reset.
 
 ## Connect Google Sheets for Vercel
 

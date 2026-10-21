@@ -7,6 +7,7 @@
     "dev": "concurrently \"node --watch server/index.js\" \"vite --host 127.0.0.1\"",
     "build": "vite build",
     "start": "node server/index.js",
+    "storage:migrate": "node scripts/storage-migrate.js",
     "sheets:upload": "node scripts/sheets-upload.js",
     "restore": "node scripts/restore.js",
     "import": "node server/import-cli.js",
