@@ -1,7 +1,12 @@
 node_modules/
 dist/
 .env
+.env.*
+!.env.example
+.vercel/
+repository/
 .mysql/
 private/
 *.log
 test-output/
+*.xlsx.lock
